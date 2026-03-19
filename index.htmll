@@ -1,0 +1,283 @@
+import pygame
+import random
+import math
+
+pygame.init()
+
+WIDTH, HEIGHT = 1000, 600
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+clock = pygame.time.Clock()
+
+TILE = 32
+GRAVITY = 0.5
+
+WORLD_WIDTH = 200
+WORLD_HEIGHT = 100
+
+# 色
+COLORS = {
+    "grass": (50,200,50),
+    "dirt": (120,72,0),
+    "stone": (100,100,100),
+    "coal": (30,30,30),
+    "iron": (200,200,200),
+    "diamond": (0,255,255),
+    "air": None
+}
+
+# ワールド生成
+world = [["air" for _ in range(WORLD_HEIGHT)] for _ in range(WORLD_WIDTH)]
+
+for x in range(WORLD_WIDTH):
+    ground = random.randint(40,60)
+    for y in range(ground, WORLD_HEIGHT):
+        if y == ground:
+            world[x][y] = "grass"
+        elif y < ground+3:
+            world[x][y] = "dirt"
+        else:
+            world[x][y] = "stone"
+
+# 鉱石生成
+def generate_ores():
+    for x in range(WORLD_WIDTH):
+        for y in range(WORLD_HEIGHT):
+            if world[x][y] == "stone":
+                r = random.random()
+                if r < 0.02:
+                    world[x][y] = "coal"
+                elif r < 0.01:
+                    world[x][y] = "iron"
+                elif r < 0.005:
+                    world[x][y] = "diamond"
+
+generate_ores()
+
+# プレイヤー
+player = {
+    "x": 200,
+    "y": 0,
+    "vx": 0,
+    "vy": 0,
+    "w": 28,
+    "h": 48,
+    "on_ground": False,
+    "hp": 20,
+    "inventory": {"dirt":0,"stone":0,"coal":0,"iron":0,"diamond":0},
+    "tool": "hand"
+}
+
+tool_power = {
+    "hand": 1,
+    "wood_pickaxe": 2,
+    "iron_pickaxe": 3
+}
+
+recipes = {
+    "wood_pickaxe": {"dirt":5},
+    "iron_pickaxe": {"iron":3}
+}
+
+camera_x = 0
+camera_y = 0
+
+zombies = []
+items = []
+
+dragon = {"x":800,"y":100,"hp":200,"alive":False}
+
+# ブロック取得
+def get_block(x,y):
+    if 0 <= x < WORLD_WIDTH and 0 <= y < WORLD_HEIGHT:
+        return world[x][y]
+    return "stone"
+
+def solid(b):
+    return b != "air"
+
+# 当たり判定
+def collide(px,py):
+    for x in range(int(px//TILE), int((px+player["w"])//TILE)+1):
+        for y in range(int(py//TILE), int((py+player["h"])//TILE)+1):
+            if solid(get_block(x,y)):
+                return True
+    return False
+
+# プレイヤー移動
+def move_player():
+    keys = pygame.key.get_pressed()
+
+    player["vx"] = 0
+    if keys[pygame.K_a]: player["vx"] = -4
+    if keys[pygame.K_d]: player["vx"] = 4
+
+    if keys[pygame.K_SPACE] and player["on_ground"]:
+        player["vy"] = -10
+
+    # クラフト
+    if keys[pygame.K_1]: craft("wood_pickaxe")
+    if keys[pygame.K_2]: craft("iron_pickaxe")
+
+    player["vy"] += GRAVITY
+
+    player["x"] += player["vx"]
+    if collide(player["x"], player["y"]):
+        player["x"] -= player["vx"]
+
+    player["y"] += player["vy"]
+    if collide(player["x"], player["y"]):
+        player["y"] -= player["vy"]
+        player["vy"] = 0
+        player["on_ground"] = True
+    else:
+        player["on_ground"] = False
+
+# 採掘
+def break_block(wx,wy):
+    block = world[wx][wy]
+    if block == "air": return
+
+    power = tool_power[player["tool"]]
+    hardness = {"dirt":1,"stone":2,"coal":2,"iron":3,"diamond":4}.get(block,1)
+
+    if power >= hardness:
+        world[wx][wy] = "air"
+        items.append({"x":wx*TILE,"y":wy*TILE,"type":block})
+
+# クラフト
+def craft(item):
+    if item not in recipes: return
+
+    for k,v in recipes[item].items():
+        if player["inventory"][k] < v:
+            return
+
+    for k,v in recipes[item].items():
+        player["inventory"][k] -= v
+
+    player["tool"] = item
+
+# アイテム
+def update_items():
+    for it in items[:]:
+        if abs(it["x"]-player["x"]) < 30 and abs(it["y"]-player["y"]) < 30:
+            player["inventory"][it["type"]] += 1
+            items.remove(it)
+
+# ゾンビ
+def spawn_zombie():
+    zombies.append({"x":random.randint(0,3000),"y":0})
+
+def update_zombies():
+    for z in zombies:
+        if z["x"] < player["x"]:
+            z["x"] += 1
+        else:
+            z["x"] -= 1
+
+        if abs(z["x"]-player["x"]) < 30:
+            player["hp"] -= 0.05
+
+# ドラゴン
+def update_dragon():
+    if dragon["alive"]:
+        dragon["x"] += math.sin(pygame.time.get_ticks()/400)*5
+        dragon["y"] += math.cos(pygame.time.get_ticks()/400)*3
+
+        if abs(player["x"]-dragon["x"]) < 120:
+            player["hp"] -= 0.2
+
+# カメラ
+def update_camera():
+    global camera_x,camera_y
+    camera_x = player["x"] - WIDTH//2
+    camera_y = player["y"] - HEIGHT//2
+
+# 描画
+def draw_world():
+    for x in range(WORLD_WIDTH):
+        for y in range(WORLD_HEIGHT):
+            block = world[x][y]
+            if block != "air":
+                pygame.draw.rect(screen, COLORS[block],
+                    (x*TILE-camera_x,y*TILE-camera_y,TILE,TILE))
+
+def draw_player():
+    pygame.draw.rect(screen,(255,0,0),
+        (player["x"]-camera_x,player["y"]-camera_y,player["w"],player["h"]))
+
+def draw_items():
+    for it in items:
+        pygame.draw.circle(screen,(255,255,0),
+            (int(it["x"]-camera_x),int(it["y"]-camera_y)),5)
+
+def draw_zombies():
+    for z in zombies:
+        pygame.draw.rect(screen,(0,200,0),
+            (z["x"]-camera_x,z["y"]-camera_y,30,40))
+
+def draw_dragon():
+    if dragon["alive"]:
+        pygame.draw.circle(screen,(200,0,200),
+            (int(dragon["x"]-camera_x),int(dragon["y"]-camera_y)),40)
+
+def draw_ui():
+    font = pygame.font.SysFont(None,20)
+    y=10
+    for k,v in player["inventory"].items():
+        t=font.render(f"{k}:{v}",True,(255,255,255))
+        screen.blit(t,(10,y))
+        y+=20
+
+    tool = font.render(f"Tool:{player['tool']}",True,(255,255,0))
+    screen.blit(tool,(10,y))
+
+# ループ
+running = True
+timer = 0
+
+while running:
+    screen.fill((0,0,0))
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            mx,my = pygame.mouse.get_pos()
+            wx = int((mx+camera_x)//TILE)
+            wy = int((my+camera_y)//TILE)
+
+            if 0<=wx<WORLD_WIDTH and 0<=wy<WORLD_HEIGHT:
+                if event.button == 1:
+                    break_block(wx,wy)
+                elif event.button == 3:
+                    if player["inventory"]["dirt"]>0:
+                        world[wx][wy]="dirt"
+                        player["inventory"]["dirt"]-=1
+
+    move_player()
+    update_items()
+    update_zombies()
+    update_dragon()
+    update_camera()
+
+    timer+=1
+    if timer>180:
+        spawn_zombie()
+        timer=0
+
+    if player["x"] > 1500:
+        dragon["alive"]=True
+
+    draw_world()
+    draw_player()
+    draw_items()
+    draw_zombies()
+    draw_dragon()
+    draw_ui()
+
+    pygame.display.flip()
+    clock.tick(60)
+
+pygame.quit()
